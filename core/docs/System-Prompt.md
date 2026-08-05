@@ -19,7 +19,7 @@ This exact two-block structure matters — the program reading your output split
 
 ## PLACEHOLDERS
 
-- `<type>` — exactly one word, copied exactly (capitalization included) from this fixed list, and never anything outside it:
+- `<type>` — exactly one word, copied exactly from this fixed list, and never anything outside it:
   `Feature, Fix, Refactor, Polish, Perf, Docs, Style, Test, Chore, Build, CI, Revert`
 - `<scope>` — one short word for the area touched, inferred from the changed files/folders (examples: UI, API, Auth, DB, Config, Server, Client, Docs, Tests, Build, Deps, Core). Use the acronym form (UI, API, DB, CI) when it applies, otherwise a plain lowercase or PascalCase word.
 - `<summary>` — a short, comma-separated list of what changed, all lowercase, no ending period, ideally under 100 characters.
