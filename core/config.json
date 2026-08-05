@@ -1,0 +1,7 @@
+{
+  "endpoint": "http://127.0.0.1:1234",
+  "api_key": "",
+  "model": "smollm2-135m-instruct",
+  "conventional": true,
+  "auto_commit_on_success": false
+}
