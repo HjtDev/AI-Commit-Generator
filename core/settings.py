@@ -11,6 +11,8 @@ class Config(BaseSettings):
     model: str = "qwen2.5-coder-3b-instruct"
     conventional: bool = True
     auto_commit_on_success: bool = False
+    timeout: int = 30
+    retries: int = 3
 
     # Load from environment variables
     model_config = SettingsConfigDict(
