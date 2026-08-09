@@ -19,6 +19,8 @@ class LLMService:
         "CI",
         "Revert",
     )
+    _STRAY_FENCE_LINE_RE = re.compile(r"^`{4,}[a-zA-Z]*[ \t]*$\n?", re.MULTILINE)
+    _FENCE_RE = re.compile(r"```[a-zA-Z]*\n?(.*?)```", re.DOTALL)
 
     def __init__(
             self,
@@ -37,7 +39,6 @@ class LLMService:
         self.model = model
         self.conventional = conventional
         self.system_prompt = system_prompt
-
         self.client = AsyncOpenAI(
             base_url=self.endpoint,
             api_key=self.api_key,
@@ -59,8 +60,7 @@ class LLMService:
         raw_output = response.choices[0].message.content
         if raw_output is None:
             raise RuntimeError("Failed to retrieve LLM output.")
-
-        return self._parse_commit_output(raw_output)
+        return self.parse_commit_output(raw_output)
 
     async def stream(
             self, diff: str, hint: str = "", system_prompt: str = ""
@@ -101,35 +101,40 @@ class LLMService:
     ) -> list[ChatCompletionMessageParam]:
         prompt = self._build_prompt(diff, hint)
         messages = []
-
         if system_prompt:
             processed_system_prompt = self._build_system_prompt(system_prompt)
             messages.append(
                 {"role": "system", "content": processed_system_prompt}
             )
-
         messages.append({"role": "user", "content": prompt})
         return messages
 
     @classmethod
-    def _parse_commit_output(cls, raw_output: str) -> Tuple[str, str]:
-        cleaned = raw_output.strip()
+    def parse_commit_output(cls, raw_output: str) -> Tuple[str, str]:
+        # If you try removing pairs of fences due to models inconsistency it will fail
+        cleaned = cls._STRAY_FENCE_LINE_RE.sub("", raw_output.strip()).strip()
+        blocks = [m.group(1).strip() for m in cls._FENCE_RE.finditer(cleaned)]
 
-        # Remove outer triple-backtick Markdown blocks if present
-        if cleaned.startswith("```"):
-            cleaned = re.sub(r"^```[a-zA-Z]*\n?", "", cleaned)
-            cleaned = re.sub(r"\n?```$", "", cleaned)
-            cleaned = cleaned.strip()
+        if len(blocks) >= 2:
+            # The expected two-fence contract: block 1 is the title,
+            # every following block is joined into the description.
+            title_lines = [ln.strip() for ln in blocks[0].splitlines() if ln.strip()]
+            summary = title_lines[0] if title_lines else ""
+            body_lines = [
+                ln.rstrip()
+                for block in blocks[1:]
+                for ln in block.splitlines()
+                if ln.strip()
+            ]
+            formatted_desc = "\n".join(body_lines).strip()
+        else:
+            # a single fenced block, or no fences at all —
+            # treat the first non-empty line as the title.
+            text = blocks[0] if blocks else cleaned
+            lines = [line.rstrip() for line in text.splitlines() if line.strip()]
+            summary = lines[0].strip() if lines else ""
+            formatted_desc = "\n".join(lines[1:]).strip()
 
-        lines = [
-            line.rstrip() for line in cleaned.splitlines() if line.strip()
-        ]
-
-        if not lines:
+        if not summary:
             raise ValueError("LLM returned an empty output.")
-
-        summary = lines[0].strip()
-        description_lines = lines[1:]
-        formatted_desc = "\n".join(description_lines).strip()
-
         return summary, formatted_desc

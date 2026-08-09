@@ -1,9 +1,10 @@
 {
-  "endpoint": "http://127.0.0.1:1234",
+  "endpoint": "http://127.0.0.1:1234/v1",
   "api_key": "",
-  "model": "smollm2-135m-instruct",
+  "model": "qwen2.5-coder-7b-instruct",
   "conventional": true,
   "auto_commit_on_success": false,
   "timeout": 30,
-  "retries": 3
+  "retries": 3,
+  "default_max_diff_chars": 128000
 }
