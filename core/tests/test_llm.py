@@ -74,21 +74,21 @@ class TestPromptConstruction:
 class TestOutputParsing:
     def test_parse_commit_output_standard_format(self):
         raw = "feat(auth): add login endpoint\n- add jwt handler\n- add test cases"
-        summary, description = LLMService._parse_commit_output(raw)
+        summary, description = LLMService.parse_commit_output(raw)
 
         assert summary == "feat(auth): add login endpoint"
         assert description == "- add jwt handler\n- add test cases"
 
     def test_parse_commit_output_strips_markdown_code_fences(self):
         raw = "```git\nfix(api): resolve timeout bug\n- increase HTTP timeout to 30s\n```"
-        summary, description = LLMService._parse_commit_output(raw)
+        summary, description = LLMService.parse_commit_output(raw)
 
         assert summary == "fix(api): resolve timeout bug"
         assert description == "- increase HTTP timeout to 30s"
 
     def test_parse_commit_output_empty_raises_value_error(self):
         with pytest.raises(ValueError, match="LLM returned an empty output"):
-            LLMService._parse_commit_output("   \n\n  ")
+            LLMService.parse_commit_output("   \n\n  ")
 
 
 # ---------------------------------------------------------------------------

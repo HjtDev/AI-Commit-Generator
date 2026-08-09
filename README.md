@@ -1,178 +1,280 @@
-# AI Git Commit Generator — Specification & Requirements (v3, Finalized)
+# AI Git Commit Generator
 
-## 🎯 Overview
-A fast, configurable tool that leverages local LLMs (via LM Studio, Ollama, etc.) or cloud APIs to analyze staged `git diff` changes and automatically generate structured, semantic commit messages and multi-line descriptions — usable either as a terminal CLI or through a locally-served browser UI.
-
----
-
-## 🧰 Tech Stack
-
-- **Core:** Python. Houses the provider abstraction (LM Studio/Ollama/OpenAI-compatible), the diff reader/truncator, the output sanitizer, and config load/save — used identically by both the CLI and the Web UI's API layer, so the generation logic exists in exactly one place.
-    - CLI parsing/subcommands: `typer` (or `click`)
-    - Terminal styling + interactive Y/E/C/N prompt: `rich` + `questionary`
-    - Git operations: `subprocess` calls to the real `git` binary (avoids reimplementing diff/commit semantics), or `GitPython` if a Python-native API is preferred
-    - Calling the model provider: `httpx` (async-friendly, works well with FastAPI)
-    - Config validation: `pydantic` models, persisted as JSON
-- **Backend (Web UI mode):** FastAPI + Uvicorn. Exposes a small REST API (`/api/diff`, `/api/generate`, `/api/commit`, `/api/config`) and mounts the pre-built Next.js static export via `StaticFiles`.
-- **Frontend (Web UI mode):** React / Next.js, built with `output: 'export'` for a fully static build. No Node.js runtime is needed in production — FastAPI just serves the resulting HTML/JS/CSS. Node is only a build-time dependency for whoever packages a release.
-- **Distribution:** packaged as a pip/pipx-installable Python package (`pipx install ai-git-commit-generator`) with a `git-auto-commit` console-script entry point. The Next.js static export is built once and bundled into the package's `static/` folder before publishing — end users never need Node.js installed to *use* the tool, only the maintainer needs it to *build* a release.
+A CLI tool that reads your `git diff`, sends it to a local or cloud LLM
+(LM Studio, Ollama, or any OpenAI-compatible endpoint), and generates a
+structured semantic commit message — title + bulleted description — which you
+can commit, edit, copy, or discard right from the terminal.
 
 ---
 
-## 🛠 Feature Requirements
+## ✨ Features
 
-### 1. Commit Message & Description Generation
-* **Semantic Format:** `<type>(<scope>): <summary>` title followed by a bulleted, line-by-line detailed description. See **System Prompt Integration** below for the exact contract.
-* **Context Preservation:** Parses both staged code modifications and optional user guidance (`--hint`).
-* Shared by both modes: the Web UI calls the same core generation function the CLI calls, just through a FastAPI route instead of a direct function call.
-
-### 2. CLI Mode — Execution & Commit Options
-* **Interactive Mode (default):** Preview the generated commit title and description, with prompts to:
-    * **[Y] Commit:** Execute `git commit -m "<title>" -m "<body>"` immediately.
-    * **[E] Edit:** Open the generated message in `$EDITOR` before committing (`git commit -e -m ...`).
-    * **[C] Copy:** Copy the text to the system clipboard without committing.
-    * **[N] Abort:** Cancel the operation.
-* **Direct Commit Flag:** `--yes` / `-y` commits instantly without interactive confirmation.
-
-### 3. API & Model Configuration (One-Time Setup)
-* **Persistent Configuration:** Stored as JSON (see **Config Schema** below) at `~/.config/git-auto-commit/config.json` (macOS/Linux) or `%APPDATA%\git-auto-commit\config.json` (Windows). Shared by CLI and Web UI mode — editing it in one place affects both.
-* **Multi-Provider Support:**
-    * LM Studio (OpenAI-compatible local server at `http://localhost:1234/v1`)
-    * Ollama local server (`http://localhost:11434/v1`)
-    * OpenAI API / custom OpenAI-compatible endpoints
-* **Config CLI Commands:**
-    * `git-auto-commit config --provider lm-studio --url http://localhost:1234/v1 --model qwen2.5-coder`
-    * Saved defaults load automatically on subsequent runs without re-specifying arguments.
-
-### 4. User Prompt Hints / Context Injection
-* **Hint Flag/Field:** `--hint "added dark mode toggle"` in CLI mode, or a text field in Web UI mode — injects extra developer intent alongside the raw diff.
-* **Combined Prompting:** The model receives both `git diff --staged` and the hint, wrapped in the fixed `DIFF:` / `HINT:` contract defined in the system prompt file — this exact shape is what makes hint-vs-diff precedence work reliably on a small model.
-
-### 5. Robust Error Handling
-* **Empty Diff Detection:** Guard against running when `git diff --staged` is empty, prompting the user to run `git add` (CLI) or showing the same message in the Web UI. The model is never invoked on a genuinely empty diff — this is caught before making the call. The system prompt's own "no changes detected" fallback is a defensive second layer, not the primary guard.
-* **API Unreachable / Timeout:** Handle connection-refused errors gracefully with actionable troubleshooting tips (e.g. "Is LM Studio's server running?"), surfaced in both the terminal and as a Web UI error toast/banner.
-* **Large Diff Truncation:** Slice diffs over `maxDiffChars` (default 4000) to avoid context overflow or slow local inference, prioritizing modified source over auto-generated lockfiles. Insert a visible truncation marker so the model knows not to assume completeness (see system prompt's INPUT section).
-* **Non-Git Directory Check:** Verify execution happens inside a valid git repository before running any git commands, in both modes.
-
-### 6. Output Sanitization & Formatting
-* **Fence Extraction:** Parse the model's two fenced code blocks and join them with a blank line for `git commit -m title -m body` (this is why the system prompt insists on that exact two-block shape — the sanitizer is built around it, not a generic strip-and-hope).
-* **Preamble Removal:** Strip any conversational artifacts ("Here is your commit message:", trailing remarks) as a fallback, in case the model doesn't fully comply.
-* **Standardized Structure:** Guarantee a clean single title line, blank-line separator, and clean bullets — whether the result is handed to `git commit` directly (CLI) or returned as JSON to the frontend (Web UI).
-
-### 7. Web UI Mode
-* **Launch:** `git-auto-commit serve` starts the FastAPI server and serves the static Next.js build at `http://127.0.0.1:<port>` (default port configurable, see Config Schema).
-* **Core flow (mirrors CLI mode):** view the current staged diff, generate a commit message, edit the title/body in the browser before committing, and commit with one click — same underlying core functions as the CLI, just reached over HTTP.
-* **API surface:**
-  | Route | Purpose |
-  |---|---|
-  | `GET /api/diff` | Return the current staged diff (and whether it's truncated) |
-  | `POST /api/generate` | Send diff + optional hint to the configured provider, return the parsed title/body |
-  | `POST /api/commit` | Run `git commit` with the (possibly edited) title/body |
-  | `GET/POST /api/config` | Read or update the persisted config |
+- **Semantic commit generation** — `<Type>(<scope>): <summary>` title plus a
+  dashed-bullet description, driven by a fixed system prompt contract.
+- **Interactive workflow** — preview the message, then **[Y]** commit,
+  **[E]** edit in `$EDITOR`, **[C]** copy to clipboard, or **[N]** abort.
+- **Multi-provider** — works with LM Studio, Ollama, or any
+  OpenAI-compatible API (including hosted ones, with an API key).
+- **Persistent config** — provider/model/behavior settings saved to disk and
+  reused on every run.
+- **`--hint` support** — pass extra developer context alongside the diff.
+- **Streaming or blocking generation** — watch tokens arrive live, or wait
+  for the full response.
+- **Robust guards** — empty-diff detection, non-repo detection, oversized-diff
+  truncation (lockfiles deprioritized first), and clear provider-vs-model
+  error messages.
 
 ---
 
-## 🔗 System Prompt Integration
+## 📦 Requirements
 
-The fixed system prompt lives in `commit-message-system-prompt.md` (v2) — treat it as the contract between the core generation logic and the model, not something to improvise around per call. It's provider- and frontend-agnostic, so it applies identically whether the request originates from the CLI or from `/api/generate`. Two decisions are locked in there:
-
-1. **Type casing:** capitalized custom types (`Feature`, `Fix`, `Polish`, etc.) are kept for v1, for personal readability. A future `--conventional` flag/config toggle can swap in lowercase Conventional Commits types (`feat`, `fix`, ...) — that's a one-line edit to the type list in the prompt file plus flag plumbing in the config, no other code changes needed.
-2. **Input contract:** the core must assemble the message sent to the model as `DIFF:` (the possibly-truncated diff) followed by `HINT:` (the hint value, or the literal string `(none provided)`). The model relies on this exact shape to weigh hint-vs-diff correctly.
+- Python 3.11+
+- [`uv`](https://docs.astral.sh/uv/) (recommended) or `pip`
+- Git
+- A running LLM provider — **LM Studio**, **Ollama**, or an
+  OpenAI-compatible API — loaded with an instruction-following model
+  **above 3B parameters**. `qwen2.5-coder-7b-instruct` is the recommended
+  model — it reliably holds onto the structured two-block format. Anything
+  under ~7B may still struggle to follow the contract consistently, and
+  sub-3B models tend to lose the format entirely.
 
 ---
 
-## ⚙️ Config Schema
+## 🚀 Installation
+
+```bash
+git clone <your-repo-url>
+cd AI-Commit-Generator
+uv sync
+```
+
+---
+
+## ⚡ Quick Start
+
+1. **Start your provider.**
+
+2. **Point the tool at it.** LM Studio and Ollama both expose an
+   OpenAI-compatible route under `/v1` — don't forget that suffix, it's the
+   most common setup mistake (LM Studio's *native* API lives at a different
+   path, `/api/v1/...`, with a different response shape entirely):
+
+   ```bash
+   uv run main.py config set --endpoint http://127.0.0.1:1234/v1 --model qwen2.5-coder-7b-instruct
+   ```
+   
+    To See more run:
+    ```
+    uv run main.py config --help
+    uv run main.py config set --help
+    ```
+
+3. **Stage some changes and generate:**
+
+   ```bash
+   git add .
+   uv run main.py
+   ```
+
+---
+
+## 🖥 CLI Usage
+
+### Generate a commit message
+
+Running the tool with no subcommand generates from your **staged** diff and
+drops into the interactive prompt:
+
+```bash
+uv run main.py [OPTIONS]
+```
+
+| Flag | Short | Description |
+|---|---|---|
+| `--hint TEXT` | `-H` | Extra context about the change to guide the model (e.g. `--hint "added dark mode toggle"`) |
+| `--yes` | `-y` | Skip the interactive prompt and commit immediately |
+| `--unstaged` | `-u` | Generate from the unstaged diff instead of the staged one |
+| `--no-stream` | | Wait for the full response instead of streaming tokens live |
+| `--dry-run` | | Generate and preview the message, but never commit |
+| `--path PATH` | `-p` | Path to the git repository (defaults to the current directory) |
+| `--max-diff-chars INT` | | Truncate diffs larger than this many characters (default `4000`) |
+| `--model TEXT` | `-m` | Override the configured model for this run only |
+| `--endpoint TEXT` | | Override the configured provider endpoint for this run only |
+| `--version` | | Show the version and exit |
+
+**Examples**
+
+```bash
+# Standard interactive run
+uv run main.py
+
+# Add developer context, commit without asking
+uv run main.py --hint "refactored auth middleware" --yes
+
+# Preview only, no commit — for checking diff truncation or a new model
+uv run main.py --dry-run
+
+# One-off run against a different model without touching saved config
+uv run main.py --model qwen2.5-coder-7b-instruct
+
+# Generate from unstaged changes in another repo
+uv run main.py --unstaged --path ../other-project
+```
+
+### Interactive workflow
+
+After generation, you'll see the proposed message and a prompt:
+
+```
+[Y]es commit  [E]dit  [C]opy  [N]o abort
+```
+
+- **Y** — runs `git commit -m "<title>" -m "<body>"` immediately.
+- **E** — opens the message in `$EDITOR` (falls back to `nano`/`notepad`);
+  the edited first line becomes the title, everything after it becomes the
+  body, then you're shown the result and asked again.
+- **C** — copies `title\n\nbody` to the system clipboard (via `pyperclip` if
+  installed, otherwise `pbcopy`/`xclip`/`xsel`/`clip`) and returns you to the
+  prompt — copying doesn't end the session, so you can still commit or edit
+  afterward.
+- **N** — aborts. Nothing is committed.
+
+### Config management
+
+All config lives under the `config` subcommand:
+
+```bash
+uv run main.py config show                     # print the current config
+uv run main.py config path                      # print the config file location
+uv run main.py config set [OPTIONS]              # update one or more values
+uv run main.py config reset [--yes]              # reset to defaults
+```
+
+`config set` options:
+
+| Flag | Description |
+|---|---|
+| `--endpoint TEXT` | Provider base URL, e.g. `http://localhost:1234/v1` |
+| `--api-key TEXT` | API key (leave unset for most local servers) |
+| `--model TEXT` | Model name/id to request from the provider |
+| `--conventional` / `--no-conventional` | Lowercase Conventional Commit types vs. capitalized custom types |
+| `--auto-commit-on-success` / `--no-auto-commit-on-success` | Skip the interactive prompt and commit automatically whenever generation succeeds |
+| `--timeout INT` | Request timeout in seconds |
+| `--retries INT` | Number of retries on request failure |
+
+```bash
+uv run main.py config set --endpoint http://127.0.0.1:1234/v1 --model qwen2.5-coder-7b-instruct --timeout 60
+```
+
+### Web UI
+
+```bash
+uv run main.py serve
+```
+
+Not implemented yet — `ui/backend` and `ui/frontend` are placeholders for a
+future FastAPI + static Next.js build that will reuse the same `core`
+package. Running `serve` today prints a note and exits.
+
+---
+
+## ⚙️ Configuration file
+
+Config is a JSON file, loaded via `pydantic-settings` and saved automatically
+on first run:
+
+- Linux/macOS/Windows: `core/config.json` (next to the package), or override the
+  path via the `AI_COMMIT_*` environment variables / an `.env` file.
 
 ```json
 {
-  "provider": "lm-studio",
-  "url": "http://localhost:1234/v1",
-  "model": "qwen2.5-coder",
-  "conventional": false,
-  "maxDiffChars": 4000,
-  "web": {
-    "host": "127.0.0.1",
-    "port": 4321
-  }
+  "endpoint": "http://127.0.0.1:1234/v1",
+  "api_key": null,
+  "model": "qwen2.5-coder-7b-instruct",
+  "conventional": true,
+  "auto_commit_on_success": false,
+  "timeout": 30,
+  "retries": 3
 }
 ```
 
 ---
 
-## 📖 CLI Command Reference
+## 🔗 System Prompt
 
-| Command | Description |
-|---|---|
-| `git-auto-commit` | Generate + interactive preview (default, CLI mode) |
-| `git-auto-commit -y` / `--yes` | Generate + commit immediately, no prompt |
-| `git-auto-commit --hint "..."` | Add developer context to the prompt |
-| `git-auto-commit config --provider <p> --url <u> --model <m>` | Persist provider settings |
-| `git-auto-commit config --conventional` | Toggle lowercase Conventional Commit types |
-| `git-auto-commit serve` | Launch the FastAPI server + Web UI |
-| `git-auto-commit serve --port 8080 --open` | Override the port and auto-open the browser |
+The fixed system prompt lives at `core/docs/System-Prompt.md` and is the
+contract between the core generation logic and the model — it applies
+identically no matter which provider is configured.
+
+- **Type** is always one of: `Feature, Fix, Refactor, Polish, Perf, Docs,
+  Style, Test, Chore, Build, CI, Revert`. Set `conventional: true` in the
+  config to lowercase these into standard Conventional Commit types
+  (`feat`, `fix`, ...) at request time — no prompt edits required.
+- **Output shape** is exactly two fenced code blocks: the title line, then
+  the bulleted description. The core's output parser (`core/llm.py`) is
+  built around this exact two-block contract, splitting on all fences
+  present rather than assuming a single wrapping block — so it degrades
+  gracefully even if a smaller model only manages one block, or none.
+- **Input shape** sent to the model is always `DIFF:` (the possibly
+  truncated diff) followed by `HINT:` (your `--hint` value, or the literal
+  string `(none provided)`).
+
+---
+
+## 🩹 Troubleshooting
+
+- **`Could not reach the model provider`** — is the server actually running?
+  Does the endpoint include the `/v1` suffix?
+- **`The model responded, but returned an unusable message`** — the model
+  ignored the fenced-block format. Try `--no-stream`, a different (larger)
+  model, or double-check `core/docs/System-Prompt.md` is still in place.
+- **Garbled or off-topic output** (e.g. the model rambling in code that has
+  nothing to do with your diff) — usually means the loaded model is too
+  small to reliably follow the structured prompt. Use `qwen2.5-coder-7b-instruct`
+  or similar; models under ~7B may not be suitable enough to hold the
+  two-block format consistently, and anything at or below 3B tends to lose
+  it entirely.
+- **`No staged changes detected`** — run `git add <files>` first, or pass
+  `--unstaged` to generate from unstaged changes instead.
 
 ---
 
 ## 📁 Project Structure
 
 ```
-ai-git-commit-generator/
-├── core/                    # shared Python package: provider abstraction, sanitizer,
-│   │                        # diff truncation, config load/save (used by both modes)
-│   ├── providers.py
-│   ├── sanitizer.py
-│   ├── diff.py
-│   └── config.py
-├── cli/                     # typer app — the terminal experience
-│   └── main.py
-├── api/                     # FastAPI app — routes for Web UI mode
-│   ├── app.py
-│   └── routes/
-├── web/                     # Next.js frontend source (built separately)
-│   ├── app/
-│   └── next.config.js       # output: 'export'
-├── static/                  # built Next.js export gets copied here before packaging
-├── commit-message-system-prompt.md
-└── pyproject.toml
+AI-Commit-Generator/
+├── core/                       # shared package: git ops, config, LLM calls
+│   ├── config.json             # persisted user config (generated on first run)
+│   ├── docs/
+│   │   ├── README.md
+│   │   └── System-Prompt.md    # the fixed model contract
+│   ├── git.py                  # Git — diff/commit via subprocess
+│   ├── llm.py                  # LLMService — provider calls + output parsing
+│   ├── settings.py             # Config (pydantic-settings) — load/save
+│   ├── __init__.py
+│   └── tests/
+│       ├── test_config.py
+│       ├── test_git.py
+│       └── test_llm.py
+├── ui/
+│   ├── backend/                # future FastAPI app (not yet built)
+│   └── frontend/               # future Next.js static export (not yet built)
+├── main.py                     # Typer + Rich CLI entry point
+├── pyproject.toml
+├── uv.lock
+├── LICENSE.md
+└── README.md
 ```
 
 ---
 
-## 🚀 Architecture Diagram / Flow
+## 🗺️ Status
 
-```
-                [git diff --staged] + [hint (optional)]
-                              │
-              ┌───────────────┴───────────────┐
-              ▼                               ▼
-        [CLI (typer)]                 [Web UI (Next.js, static)]
-              │                               │
-              │                       [FastAPI routes /api/*]
-              └───────────────┬───────────────┘
-                              ▼
-                     [Shared Core Package]
-                  (config, provider call, sanitizer)
-                              │
-                              ▼
-              [LM Studio / Ollama / API Endpoint]
-                              │
-                              ▼
-                      [Output Sanitizer]
-              (extracts two fenced blocks, strips stray preamble)
-                              │
-              ┌───────────────┴───────────────┐
-              ▼                               ▼
-   [CLI interactive prompt]           [Browser preview + edit]
-   Y: commit / E: edit /              one-click commit via
-   C: copy / N: abort                 POST /api/commit
-```
-
----
-
-## 🗺️ Roadmap
-
-- **v0.1** — Core package + CLI: staged diff → single hardcoded provider (LM Studio) → sanitizer → interactive commit prompt.
-- **v0.2** — Config persistence (`config.json`) + multi-provider support (Ollama, OpenAI-compatible) + `--hint` flag.
-- **v0.3** — Error handling hardening: empty diff guard, unreachable-API messaging, large-diff truncation with marker.
-- **v0.4** — FastAPI + statically-exported Next.js Web UI wrapping the same core package (`serve` command, `/api/*` routes).
-- **v1.0** — `--conventional` flag, polish pass, publish to PyPI (with the frontend pre-built and bundled in).
+- ✅ Core package: git diff/commit, config persistence, multi-provider LLM
+  calls, streaming + non-streaming generation, output parsing.
+- ✅ CLI: interactive Y/E/C/N flow, `--hint`, `--yes`, `--unstaged`,
+  `--dry-run`, `--no-stream`, diff truncation, config subcommands,
+  per-run `--model`/`--endpoint` overrides.
+- ⏳ Web UI (`serve` command, FastAPI + static Next.js): not started.
+- ⏳ `--conventional` is already wired into config/prompt handling; no
+  further work needed there.

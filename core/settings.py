@@ -13,6 +13,7 @@ class Config(BaseSettings):
     auto_commit_on_success: bool = False
     timeout: int = 30
     retries: int = 3
+    default_max_diff_chars: int = 128000
 
     # Load from environment variables
     model_config = SettingsConfigDict(
