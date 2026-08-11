@@ -1,6 +1,6 @@
 from pathlib import Path
 from pydantic import ValidationError
-from core.settings import Config
+from core.settings import Config, mask_secret
 import json, pytest
 
 
@@ -112,3 +112,23 @@ class TestConfigValidation:
     def test_raises_validation_error_on_invalid_type(self):
         with pytest.raises(ValidationError):
             Config(conventional="not_a_boolean")  # type: ignore
+
+
+class TestMaskSecret:
+    def test_none_returns_none(self):
+        assert mask_secret(None) is None
+
+    def test_empty_string_returns_empty_string(self):
+        assert mask_secret("") == ""
+
+    def test_short_value_returns_asterisks(self):
+        assert mask_secret("12345678") == "****"
+
+    def test_long_value_keeps_first_four_and_last_two(self):
+        assert mask_secret("sk-1234567890abcdef") == "sk-1…ef"
+
+    def test_never_returns_the_raw_value_for_a_realistic_key(self):
+        raw = "sk-proj-abcdefghijklmnopqrstuvwxyz"
+        masked = mask_secret(raw)
+        assert masked != raw
+        assert raw[4:-2] not in masked

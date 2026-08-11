@@ -1,6 +1,8 @@
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 import pytest
-from core.llm import LLMService  # Adjust import path accordingly
+from core.llm import LLMService, build_llm_service, load_system_prompt  # Adjust import path accordingly
+from core.settings import Config
 
 
 # ---------------------------------------------------------------------------
@@ -167,3 +169,74 @@ class TestLLMServiceAsyncCalls:
             collected.append(chunk)
 
         assert "".join(collected) == "feat: add streaming"
+
+
+# ---------------------------------------------------------------------------
+# Unit Tests: load_system_prompt / build_llm_service
+# ---------------------------------------------------------------------------
+
+class TestLoadSystemPrompt:
+    def test_missing_file_returns_empty_string_silently(self, tmp_path: Path):
+        # Silent on purpose -- this is called from both the CLI and the
+        # backend, and only the CLI wants to surface a human-facing warning
+        # about a missing prompt (see cli/helpers.py:get_system_prompt).
+        assert load_system_prompt(tmp_path / "does-not-exist.md") == ""
+
+    def test_existing_file_returns_its_content(self, tmp_path: Path):
+        prompt_file = tmp_path / "prompt.md"
+        prompt_file.write_text("You are a commit message generator.", encoding="utf-8")
+
+        assert load_system_prompt(prompt_file) == "You are a commit message generator."
+
+    def test_default_path_points_at_the_real_shipped_prompt(self):
+        # The real core/docs/System-Prompt.md must actually be found via the
+        # default argument -- this is what both the CLI and the backend
+        # rely on when they call load_system_prompt() with no path.
+        prompt = load_system_prompt()
+        assert prompt != ""
+        assert "commit message generator" in prompt.lower()
+
+
+class TestBuildLlmService:
+    @pytest.fixture
+    def config(self) -> Config:
+        return Config(
+            endpoint="http://127.0.0.1:1234/v1",
+            api_key="sk-test",
+            model="qwen2.5-coder-3b-instruct",
+            conventional=True,
+            timeout=45,
+            retries=5,
+        )
+
+    def test_builds_from_config_alone(self, config: Config):
+        service = build_llm_service(config, system_prompt="explicit prompt")
+
+        assert service.endpoint == config.endpoint
+        assert service.model == config.model
+        assert service.api_key == config.api_key
+        assert service.timeout == config.timeout
+        assert service.retries == config.retries
+        assert service.conventional == config.conventional
+        assert service.system_prompt == "explicit prompt"
+
+    def test_model_and_endpoint_overrides_take_precedence_over_config(self, config: Config):
+        service = build_llm_service(
+            config, model="override-model", endpoint="http://override:9999/v1", system_prompt="x"
+        )
+
+        assert service.model == "override-model"
+        assert service.endpoint == "http://override:9999/v1"
+
+    def test_missing_api_key_falls_back_to_placeholder(self):
+        config = Config(api_key=None)
+        service = build_llm_service(config, system_prompt="x")
+
+        assert service.api_key == "AI-COMMIT"
+
+    def test_omitting_system_prompt_loads_the_real_shipped_prompt(self, config: Config):
+        # No explicit system_prompt -- must fall back to load_system_prompt(),
+        # not silently construct a service with an empty prompt.
+        service = build_llm_service(config)
+
+        assert service.system_prompt != ""

@@ -1,7 +1,12 @@
-from typing import AsyncGenerator, Tuple
+from pathlib import Path
+from typing import AsyncGenerator, Optional, Tuple
 from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletionMessageParam
 import re
+
+from core.settings import Config
+
+SYSTEM_PROMPT_PATH = Path(__file__).resolve().parent / "docs" / "System-Prompt.md"
 
 
 class LLMService:
@@ -138,3 +143,26 @@ class LLMService:
         if not summary:
             raise ValueError("LLM returned an empty output.")
         return summary, formatted_desc
+
+
+def load_system_prompt(path: Path = SYSTEM_PROMPT_PATH) -> str:
+    if path.is_file():
+        return path.read_text(encoding="utf-8")
+    return ""
+
+
+def build_llm_service(
+        config: Config,
+        model: Optional[str] = None,
+        endpoint: Optional[str] = None,
+        system_prompt: Optional[str] = None,
+) -> "LLMService":
+    return LLMService(
+        endpoint=endpoint or config.endpoint,
+        model=model or config.model,
+        api_key=config.api_key or "AI-COMMIT",
+        timeout=config.timeout,
+        retries=config.retries,
+        conventional=config.conventional,
+        system_prompt=system_prompt if system_prompt is not None else load_system_prompt(),
+    )
