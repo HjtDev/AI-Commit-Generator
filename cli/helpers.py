@@ -1,21 +1,21 @@
 from rich.panel import Panel
 from rich.text import Text
-from cli import SYSTEM_PROMPT_PATH, err_console
+from cli import err_console
 from typing import Optional
 from core.git import Git
-from core.llm import LLMService
+from core.llm import LLMService, SYSTEM_PROMPT_PATH, build_llm_service, load_system_prompt
 from core.settings import Config
 import typer
 
 
 def get_system_prompt() -> str:
-    if SYSTEM_PROMPT_PATH.is_file():
-        return SYSTEM_PROMPT_PATH.read_text(encoding="utf-8")
-    err_console.print(
-        f"[yellow]⚠ No system prompt found at[/yellow] [dim]{SYSTEM_PROMPT_PATH}[/dim] "
-        "[yellow]— continuing without one.[/yellow]"
-    )
-    return ""
+    prompt = load_system_prompt()
+    if not prompt:
+        err_console.print(
+            f"[yellow]⚠ No system prompt found at[/yellow] [dim]{SYSTEM_PROMPT_PATH}[/dim] "
+            "[yellow]— continuing without one.[/yellow]"
+        )
+    return prompt
 
 
 def resolve_git(path: Optional[str]) -> Git:
@@ -27,15 +27,7 @@ def resolve_git(path: Optional[str]) -> Git:
 
 
 def build_llm(config: Config, model: Optional[str], endpoint: Optional[str]) -> LLMService:
-    return LLMService(
-        endpoint=endpoint or config.endpoint,
-        model=model or config.model,
-        api_key=config.api_key or "AI-COMMIT",
-        timeout=config.timeout,
-        retries=config.retries,
-        conventional=config.conventional,
-        system_prompt=get_system_prompt(),
-    )
+    return build_llm_service(config, model=model, endpoint=endpoint, system_prompt=get_system_prompt())
 
 
 def split_title_body(text: str) -> tuple[str, str]:
