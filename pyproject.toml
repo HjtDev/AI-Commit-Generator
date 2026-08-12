@@ -1,6 +1,6 @@
 [project]
 name = "ai-commit-generator"
-version = "0.1.0"
+version = "0.4.0"
 requires-python = ">=3.13"
 dependencies = [
     "fastapi>=0.141.1",
@@ -21,5 +21,5 @@ dependencies = [
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
-testpaths = ["core/tests"]
+testpaths = ["core/tests", "ui/backend/tests"]
 asyncio_mode = "auto"
