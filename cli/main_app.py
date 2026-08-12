@@ -54,13 +54,24 @@ def main(
 
 @app.command()
 def serve(
-        port: int = typer.Option(4321, "--port", help="Port to serve the Web UI on."),
+        port: int = typer.Option(8000, "--port", help="Port to serve the Web UI on."),
         host: str = typer.Option("127.0.0.1", "--host", help="Host to bind the Web UI to."),
         open_browser: bool = typer.Option(False, "--open", help="Open the Web UI in your browser."),
 ) -> None:
-    """Launch the FastAPI server + Web UI (not yet implemented)."""
-    err_console.print(
-        "[yellow]⚠ Web UI mode isn't wired up yet — 'ui/backend' and 'ui/frontend' are still empty.[/yellow]\n"
-        "[dim]This will start FastAPI + the static Next.js export once that's built.[/dim]"
-    )
-    raise typer.Exit(code=1)
+    """Launch the FastAPI server + Web UI."""
+    import uvicorn
+    from ui.backend.main import app as fastapi_app
+
+    if open_browser:
+        import threading
+        import time
+        import webbrowser
+
+        def _open():
+            time.sleep(1)  # for uvicorn
+            webbrowser.open(f"http://{host}:{port}")
+
+        threading.Thread(target=_open, daemon=True).start()
+
+    console.print(f"[bold cyan]Serving at[/bold cyan] http://{host}:{port}")
+    uvicorn.run(fastapi_app, host=host, port=port, log_level="warning")
