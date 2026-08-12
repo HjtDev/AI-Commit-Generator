@@ -1,13 +1,10 @@
 from core.settings import Config
-from pathlib import Path
 from rich.console import Console
 import typer
 
 
 APP_NAME = "git-auto-commit"
 __version__ = "0.4.0"
-
-SYSTEM_PROMPT_PATH = Path(__file__).resolve().parent.parent / "core" / "docs" / "System-Prompt.md"
 
 config = Config.load()
 

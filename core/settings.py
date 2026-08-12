@@ -48,3 +48,9 @@ class Config(BaseSettings):
         default_config = self.__class__()
         default_config.save(path)
         return default_config
+
+
+def mask_secret(value: str | None) -> str | None:
+    if not value:
+        return value
+    return value[:4] + "…" + value[-2:] if len(value) > 8 else "****"

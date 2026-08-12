@@ -1,7 +1,7 @@
 from rich.table import Table
 from typing import Optional
 from cli import config_app, console, err_console
-from core.settings import Config, CONFIG_FILE
+from core.settings import Config, CONFIG_FILE, mask_secret
 import typer
 
 
@@ -14,8 +14,8 @@ def config_show() -> None:
     table.add_column("Value")
     for field_name in type(config).model_fields:
         value = getattr(config, field_name)
-        if field_name == "api_key" and value:
-            value = value[:4] + "…" + value[-2:] if len(value) > 8 else "****"
+        if field_name == "api_key":
+            value = mask_secret(value)
         table.add_row(field_name, str(value))
     console.print(table)
     from core.settings import CONFIG_FILE
